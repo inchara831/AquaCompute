@@ -1,0 +1,25 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadRagDocsFromS3",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:ListBucket"
+      ],
+      "Resource": [
+        "arn:aws:s3:::<YOUR_AQUACOMPUTE_S3_BUCKET>",
+        "arn:aws:s3:::<YOUR_AQUACOMPUTE_S3_BUCKET>/rag-docs/*"
+      ]
+    },
+    {
+      "Sid": "InvokeBedrockEmbeddingModel",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:InvokeModel"
+      ],
+      "Resource": "arn:aws:bedrock:<YOUR_BEDROCK_REGION>::foundation-model/amazon.titan-embed-text-v2:0"
+    }
+  ]
+}

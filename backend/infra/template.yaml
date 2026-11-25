@@ -1,0 +1,250 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  AquaCompute Person 1 Infrastructure (DynamoDB, S3, Scheduled Lambda Collector,
+  EventBridge Scheduler, HTTP API Gateway, CloudWatch LogGroups & Alarms).
+  NOTE: Bedrock Knowledge Base is intentionally NOT provisioned here to avoid
+  unapproved vector-store charges (e.g. OpenSearch Serverless). Configure BEDROCK_KB_ID
+  after explicit approval and setup.
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: dev
+  TargetEc2InstanceId:
+    Type: String
+    Description: Existing EC2 instance ID to monitor (e.g. i-0123456789abcdef0)
+  PollingRateExpression:
+    Type: String
+    Default: rate(5 minutes)
+    Description: EventBridge Scheduler expression for periodic metric collection
+  S3BucketName:
+    Type: String
+    Description: Globally unique S3 bucket name for AquaCompute reports & RAG docs
+  BedrockKbId:
+    Type: String
+    Default: ""
+    Description: Optional Amazon Bedrock Knowledge Base ID (leave blank until provisioned)
+  BedrockModelId:
+    Type: String
+    Default: anthropic.claude-3-haiku-20240307-v1:0
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Timeout: 30
+    MemorySize: 256
+    Architectures:
+      - x86_64
+    Environment:
+      Variables:
+        APP_ENV: !Ref EnvironmentName
+        EC2_INSTANCE_ID: !Ref TargetEc2InstanceId
+        DYNAMODB_READINGS_TABLE: !Ref ReadingsTable
+        DYNAMODB_RUNS_TABLE: !Ref CollectionRunsTable
+        S3_BUCKET_NAME: !Ref AquaComputeBucket
+        BEDROCK_KB_ID: !Ref BedrockKbId
+        BEDROCK_MODEL_ID: !Ref BedrockModelId
+        CLOUDWATCH_LOGS_ENABLED: "false"
+
+Resources:
+  AquaComputeBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref S3BucketName
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  ReadingsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: AquaComputeReadings
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: instance_id
+          AttributeType: S
+        - AttributeName: collected_at
+          AttributeType: S
+      KeySchema:
+        - AttributeName: instance_id
+          KeyType: HASH
+        - AttributeName: collected_at
+          KeyType: RANGE
+
+  CollectionRunsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: AquaComputeCollectionRuns
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: run_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: run_id
+          KeyType: HASH
+
+  CollectorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub aquacompute-collector-${EnvironmentName}
+      CodeUri: ../
+      Handler: app.lambda_fn.collector_handler.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ec2:DescribeInstances
+                - cloudwatch:GetMetricData
+              Resource: "*"
+            - Effect: Allow
+              Action:
+                - dynamodb:PutItem
+              Resource:
+                - !GetAtt ReadingsTable.Arn
+                - !GetAtt CollectionRunsTable.Arn
+            - Effect: Allow
+              Action:
+                - s3:PutObject
+              Resource: !Sub "${AquaComputeBucket.Arn}/reports/*"
+
+  CollectorScheduleRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: scheduler.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: InvokeAquaComputeCollector
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt CollectorFunction.Arn
+
+  CollectorSchedule:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      Name: !Sub aquacompute-ec2-poll-${EnvironmentName}
+      ScheduleExpression: !Ref PollingRateExpression
+      FlexibleTimeWindow:
+        Mode: "OFF"
+      Target:
+        Arn: !GetAtt CollectorFunction.Arn
+        RoleArn: !GetAtt CollectorScheduleRole.Arn
+        Input: !Sub '{"instance_id": "${TargetEc2InstanceId}", "export_to_s3": true}'
+
+  AquaComputeHttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: !Ref EnvironmentName
+      CorsConfiguration:
+        AllowOrigins:
+          - "*"
+        AllowMethods:
+          - GET
+          - POST
+          - OPTIONS
+        AllowHeaders:
+          - Content-Type
+          - Authorization
+
+  ApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub aquacompute-api-${EnvironmentName}
+      CodeUri: ../
+      Handler: app.lambda_fn.api_handler.handler
+      Events:
+        ApiCatchAll:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AquaComputeHttpApi
+            Path: /{proxy+}
+            Method: ANY
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ec2:DescribeInstances
+                - cloudwatch:GetMetricData
+                - cloudwatch:GetMetricStatistics
+              Resource: "*"
+            - Effect: Allow
+              Action:
+                - dynamodb:PutItem
+                - dynamodb:GetItem
+                - dynamodb:Query
+                - dynamodb:Scan
+              Resource:
+                - !GetAtt ReadingsTable.Arn
+                - !GetAtt CollectionRunsTable.Arn
+            - Effect: Allow
+              Action:
+                - s3:ListBucket
+                - s3:GetObject
+                - s3:PutObject
+              Resource:
+                - !GetAtt AquaComputeBucket.Arn
+                - !Sub "${AquaComputeBucket.Arn}/*"
+            - Effect: Allow
+              Action:
+                - bedrock:Retrieve
+                - bedrock:InvokeModel
+              Resource: "*"
+
+  CollectorErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub aquacompute-collector-errors-${EnvironmentName}
+      AlarmDescription: Alerts when the scheduled EC2 metrics collector Lambda encounters errors.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref CollectorFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+  Api5xxAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub aquacompute-api-5xx-${EnvironmentName}
+      AlarmDescription: Alerts on HTTP 5XX responses from AquaCompute API Gateway.
+      Namespace: AWS/ApiGateway
+      MetricName: 5XXError
+      Dimensions:
+        - Name: ApiId
+          Value: !Ref AquaComputeHttpApi
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 3
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+Outputs:
+  HttpApiUrl:
+    Description: Base URL for AquaCompute API Gateway
+    Value: !Sub "https://${AquaComputeHttpApi}.execute-api.${AWS::Region}.amazonaws.com/${EnvironmentName}"
+  CollectorLambdaArn:
+    Description: Scheduled EC2 collector Lambda ARN
+    Value: !GetAtt CollectorFunction.Arn
+  S3BucketName:
+    Description: AquaCompute S3 bucket for reports and RAG docs
+    Value: !Ref AquaComputeBucket

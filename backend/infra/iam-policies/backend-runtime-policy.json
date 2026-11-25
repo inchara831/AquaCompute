@@ -1,0 +1,87 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadTargetEc2Metadata",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeInstances"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ReadCloudWatchEc2Metrics",
+      "Effect": "Allow",
+      "Action": [
+        "cloudwatch:GetMetricData",
+        "cloudwatch:GetMetricStatistics",
+        "cloudwatch:ListMetrics"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ReadWriteAquaComputeDynamoDB",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:PutItem",
+        "dynamodb:GetItem",
+        "dynamodb:Query",
+        "dynamodb:Scan"
+      ],
+      "Resource": [
+        "arn:aws:dynamodb:<YOUR_AWS_REGION>:584120133247:table/AquaComputeReadings",
+        "arn:aws:dynamodb:<YOUR_AWS_REGION>:584120133247:table/AquaComputeCollectionRuns"
+      ]
+    },
+    {
+      "Sid": "ReadWriteAquaComputeS3Bucket",
+      "Effect": "Allow",
+      "Action": [
+        "s3:ListBucket"
+      ],
+      "Resource": "arn:aws:s3:::<YOUR_AQUACOMPUTE_S3_BUCKET>",
+      "Condition": {
+        "StringLike": {
+          "s3:prefix": [
+            "reports/*",
+            "rag-docs/*"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "ReadWriteAquaComputeS3Objects",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject"
+      ],
+      "Resource": [
+        "arn:aws:s3:::<YOUR_AQUACOMPUTE_S3_BUCKET>/reports/*",
+        "arn:aws:s3:::<YOUR_AQUACOMPUTE_S3_BUCKET>/rag-docs/*"
+      ]
+    },
+    {
+      "Sid": "WriteBackendCloudWatchLogs",
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+      ],
+      "Resource": "arn:aws:logs:<YOUR_AWS_REGION>:584120133247:log-group:/aquacompute/*:*"
+    },
+    {
+      "Sid": "AquaMindBedrockKnowledgeBaseQuery",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:Retrieve",
+        "bedrock:InvokeModel"
+      ],
+      "Resource": [
+        "arn:aws:bedrock:<YOUR_BEDROCK_REGION>:584120133247:knowledge-base/<YOUR_KB_ID>",
+        "arn:aws:bedrock:<YOUR_BEDROCK_REGION>::foundation-model/*"
+      ]
+    }
+  ]
+}

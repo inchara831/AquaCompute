@@ -1,0 +1,50 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DescribeMonitoredEc2Instance",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeInstances"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "QueryCloudWatchMetrics",
+      "Effect": "Allow",
+      "Action": [
+        "cloudwatch:GetMetricData"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "PersistReadingsAndRunStatus",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:PutItem"
+      ],
+      "Resource": [
+        "arn:aws:dynamodb:<YOUR_AWS_REGION>:584120133247:table/AquaComputeReadings",
+        "arn:aws:dynamodb:<YOUR_AWS_REGION>:584120133247:table/AquaComputeCollectionRuns"
+      ]
+    },
+    {
+      "Sid": "ArchiveReportsToS3",
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject"
+      ],
+      "Resource": "arn:aws:s3:::<YOUR_AQUACOMPUTE_S3_BUCKET>/reports/*"
+    },
+    {
+      "Sid": "WriteLambdaLogs",
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+      ],
+      "Resource": "arn:aws:logs:<YOUR_AWS_REGION>:584120133247:log-group:/aws/lambda/aquacompute-*:*"
+    }
+  ]
+}
